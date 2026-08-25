@@ -3,6 +3,8 @@
 **Datos contables: no modificados. Base de datos: no modificada.**
 Sin valores de secretos.
 
+`php/acciones-factura.php` parcheado en producción (GET LEGACY — AUTHENTICATED ONLY). Copia: `acciones-factura.php`. Backup vivo `*.bak-20260825-180631`. HMAC `acciones/actualizar_estado_factura.php` no tocado.
+
 ## Modelo de autorización (real)
 
 ```
@@ -41,20 +43,36 @@ El ID de proveedor **nunca** se toma de GET/POST.
 
 `Secure` sí. `HttpOnly`/`SameSite` no. `session_start()` en ~80 archivos antes de config. Sin prueba de login no se centralizó.
 
-## GET que escriben (inventario, no ejecutados)
+## GET que escriben (inventario)
 
-| ENDPOINT | MÉTODO | AUTH | AUTORIZACIÓN | CSRF | HMAC | CAMBIA DATOS | RIESGO |
-|---|---|---|---|---|---|---|---|
-| php/acciones-factura.php | GET | NO | NO | NO | NO | SÍ estado | CRITICAL |
-| acciones/actualizar_estado_factura.php | GET | sesión o token | empresa dueña / token=admin | NO | SÍ (sin TTL) | SÍ estado | HIGH |
-| acciones/eliminar_factura.php | GET | sesión | admin/empresa | NO | NO | SÍ | HIGH |
-| acciones/eliminar_factura_permanente.php | GET | sesión | admin/empresa | NO | NO | SÍ delete | HIGH |
-| php/restaurar_factura.php | POST | sesión | admin/empresa | ? | NO | SÍ | HIGH |
-| acciones/editar_factura.php | GET+POST | sesión débil | incompleta | NO | NO | SÍ | HIGH |
-| php/procesar_formulario.php | POST | sesión proveedor | id_proveedor sesión | SÍ | NO | SÍ alta | — |
-| php/registrar_abono.php | POST | sesión | CSRF sí; ownership factura pendiente | SÍ | NO | SÍ pago | MEDIUM |
+| ENDPOINT | MÉTODO | AUTH | AUTORIZACIÓN | CSRF | HMAC | CAMBIA DATOS | RIESGO | PRIORIDAD |
+|---|---|---|---|---|---|---|---|---|
+| php/acciones-factura.php | GET LEGACY | sesión | admin/empresa + ownership en UPDATE | NO | NO | SÍ estado | — | **PARCHEADO** |
+| php/limpiar_facturas.php | GET | NO | NO | NO | NO | SÍ DELETE masivo | CRITICAL | P0 siguiente |
+| acciones/eliminar_factura.php | GET | sesión | admin/empresa (UPDATE sin scope en WHERE) | NO | NO | SÍ estado | HIGH | P1 (UI historial) |
+| acciones/eliminar_factura_permanente.php | GET | sesión | admin/empresa | NO | NO | SÍ delete + archivos | HIGH | P1 |
+| acciones/actualizar_estado_factura.php | GET | sesión o token | empresa dueña / token=admin | NO | SÍ (sin TTL) | SÍ estado | HIGH | P1 emails — **no tocar aún** |
+| php/restaurar_factura.php | POST | sesión | admin/empresa (UPDATE sin scope en WHERE) | ? | NO | SÍ estado | HIGH | P2 |
+| acciones/editar_factura.php | GET+POST | sesión débil | incompleta | NO | NO | SÍ | HIGH | P2 |
+| acciones/validar_proveedor.php | GET | token | token de alta | NO | NO | SÍ proveedores | HIGH | P2 (emails alta) |
+| PanelAdmin/acciones/toggle_empresa.php | GET | admin | rol admin | NO | NO | SÍ activo | MEDIUM | P3 |
+| PanelAdmin/acciones/toggle_usuario.php | GET | admin | rol admin | NO | NO | SÍ activo | MEDIUM | P3 |
+| PanelAdmin/eliminar_{empresa,usuario,proveedor,admin}.php | GET | panel | variable | NO | NO | SÍ delete | HIGH | P3 |
+| php/procesar_formulario.php | POST | sesión proveedor | id_proveedor sesión | SÍ | NO | SÍ alta | — | finfo hecho |
+| php/registrar_abono.php | POST | sesión | CSRF sí; ownership pendiente | SÍ | NO | SÍ pago | MEDIUM | finfo siguiente |
+| php/crear_factura_admin.php | POST | admin | rol admin | ? | NO | SÍ alta | MEDIUM | finfo siguiente |
 
-No se parchearon escrituras GET en esta fase.
+Copia del parche: `patches/idor/acciones-factura.php`. Backup vivo `*.bak-20260825-180631`.
+
+No se parchearon los demás GET de escritura en esta subfase.
+
+## Siguiente subfase (no ejecutada)
+
+1. `crear_factura_admin.php` + `registrar_abono.php` con `finfo`
+2. Cookies HttpOnly/SameSite (riesgo: muchos `session_start()` sueltos)
+3. Documentos privados (no bloquear `/archivos/` todavía)
+4. CSRF en GET restantes de la UI
+5. Preparar rotación de secretos HMAC — **no rotar todavía**
 
 ## Documentos
 

@@ -1,0 +1,9 @@
+# Never commit production secrets, backups, or vendor dumps
+.env
+.env.*
+!.env.example
+*.zip
+*.xlsx
+error_log
+**/vendor/
+SystemSuplidor/

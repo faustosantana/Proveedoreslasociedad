@@ -3,7 +3,7 @@
 **Datos contables: no modificados. Base de datos: no modificada.**
 Sin valores de secretos.
 
-`php/acciones-factura.php` parcheado en producción (GET LEGACY — AUTHENTICATED ONLY). Copia: `acciones-factura.php`. Backup vivo `*.bak-20260825-180631`. HMAC `acciones/actualizar_estado_factura.php` no tocado.
+`php/acciones-factura.php` y `php/limpiar_facturas.php` parcheados en producción. HMAC `acciones/actualizar_estado_factura.php` no tocado.
 
 ## Modelo de autorización (real)
 
@@ -48,7 +48,7 @@ El ID de proveedor **nunca** se toma de GET/POST.
 | ENDPOINT | MÉTODO | AUTH | AUTORIZACIÓN | CSRF | HMAC | CAMBIA DATOS | RIESGO | PRIORIDAD |
 |---|---|---|---|---|---|---|---|---|
 | php/acciones-factura.php | GET LEGACY | sesión | admin/empresa + ownership en UPDATE | NO | NO | SÍ estado | — | **PARCHEADO** |
-| php/limpiar_facturas.php | GET | NO | NO | NO | NO | SÍ DELETE masivo | CRITICAL | P0 siguiente |
+| php/limpiar_facturas.php | POST | sesión | **admin** + CSRF | SÍ | NO | SÍ DELETE masivo (≥15d eliminada) | — | **PARCHEADO** |
 | acciones/eliminar_factura.php | GET | sesión | admin/empresa (UPDATE sin scope en WHERE) | NO | NO | SÍ estado | HIGH | P1 (UI historial) |
 | acciones/eliminar_factura_permanente.php | GET | sesión | admin/empresa | NO | NO | SÍ delete + archivos | HIGH | P1 |
 | acciones/actualizar_estado_factura.php | GET | sesión o token | empresa dueña / token=admin | NO | SÍ (sin TTL) | SÍ estado | HIGH | P1 emails — **no tocar aún** |

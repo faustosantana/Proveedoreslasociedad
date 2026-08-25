@@ -2,7 +2,7 @@
 
 Fecha: 2026-08-25. Producción UP. DB no tocada.
 
-Parches en `patches/idor/`. Backups UTC `*.bak-20260825-160300` (lecturas) y `php/acciones-factura.php.bak-20260825-180631` (escritura).
+Parches en `patches/idor/`. Backups UTC `*.bak-20260825-160300` (lecturas), `php/acciones-factura.php.bak-20260825-180631` y `php/limpiar_facturas.php.bak-20260825-184750`.
 
 ## Aislamiento de lectura (Justech)
 
@@ -38,3 +38,18 @@ Justech (sesión proveedor), propia `fact_6a7c79e56fb4c` y ajena `fact_69b20cab5
 `accion=xxxx` anónimo: **401**. Justech autenticado (recheck): **400** `Acción no válida.` Proveedor + aceptar: **403** `No autorizado`.
 
 `fact_6a7c79e56fb4c` (NCF B0100001638, MacBook Air) ya estaba **Aceptada** en las pruebas de aislamiento Justech (`browser_results.txt`, DETALLE_PROPIO) **antes** de este parche. Tras los GET rechazados sigue Aceptada. **FACTURAS MODIFICADAS DURANTE PRUEBA = 0.** No se revirtió ni se escribió estado.
+
+## `php/limpiar_facturas.php` (P0, 2026-08-25)
+
+Herramienta de mantenimiento **sin callers** (PHP/JS/HTML/email/cron). No se borró el archivo.
+
+Antes: cualquier GET ejecutaba transacción + `DELETE FROM facturas` de todas las `eliminada` con `fecha_eliminacion` ≥ 15 días. Sin sesión, sin CSRF, sin `unlink`. No borra abonos. No toma IDs del request.
+
+Después: sesión → POST → CSRF (`validarTokenCSRF` / `$_SESSION['csrf_token']`) → rol **admin** → el mismo DELETE (prepared, sin input). GET autenticado **405**. Anónimo **401**. Proveedor/empresa/usuario **403** en POST.
+
+- Backup: `php/limpiar_facturas.php.bak-20260825-184750` (HTTP 403; SHA `54fa05d1216c03791628c75a2b134beb18985307d5e6f76d03c0fd5bd9ef6738`)
+- SHA después: `3f582a8401cc4358019dcb0480a98889fd9184d4da1e5799603874b79dc778d8`
+- Anónimo GET/POST: **401** `No autorizado`. Home **200**.
+- No se ejecutó POST de admin. DELETE inalcanzable en las pruebas.
+
+La misma condición de purge sigue en `historial.php` (cada carga autenticada). Inventario; no parcheado en esta subfase.

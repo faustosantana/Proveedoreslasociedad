@@ -35,6 +35,6 @@ Anónimo GET con ids reales (`aceptar`/`eliminar`/`restaurar`/`xxxx`): **401** `
 
 Justech (sesión proveedor), propia `fact_6a7c79e56fb4c` y ajena `fact_69b20cab54c30`: **403** `No autorizado` en aceptar/eliminar/restaurar. Sin SweetAlert de éxito. Sin redirect a historial.
 
-`accion=xxxx` con Justech: **403** `No autorizado` (el rol proveedor corta antes de la allowlist en la versión probada). Anónimo `xxxx`: **401**. Código vivo actual: sesión → allowlist **400** → rol **403**.
+`accion=xxxx` anónimo: **401**. Justech autenticado (recheck): **400** `Acción no válida.` Proveedor + aceptar: **403** `No autorizado`.
 
 `fact_6a7c79e56fb4c` (NCF B0100001638, MacBook Air) ya estaba **Aceptada** en las pruebas de aislamiento Justech (`browser_results.txt`, DETALLE_PROPIO) **antes** de este parche. Tras los GET rechazados sigue Aceptada. **FACTURAS MODIFICADAS DURANTE PRUEBA = 0.** No se revirtió ni se escribió estado.

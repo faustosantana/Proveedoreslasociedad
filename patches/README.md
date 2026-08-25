@@ -1,17 +1,15 @@
 # Parche en producción — reporte de facturas
 
-Archivos desplegados el 2026-08-25 en:
-
-`/public_html/SystemSuplidor/historial/`
+Archivos en `/public_html/SystemSuplidor/historial/`
 
 | Archivo | Rol |
 |---|---|
-| `reporte_config.php` | Wizard. El submit ahora copia `limit` (incluido `0` = Todos) a inputs hidden. |
-| `generar_reporte.php` | Excel. Allowlist `0, 25, 50, 100`; `LIMIT` solo si el entero es `> 0`. |
+| `reporte_config.php` | Wizard. POST de `limit` (incluido `0` = Todos) vía `FormData`. Descarga Excel con `fetch` + Blob; cierra el overlay al recibir la respuesta. |
+| `generar_reporte.php` | Excel. Allowlist `0, 25, 50, 100`; `LIMIT` solo si el entero es `> 0`. Cabecera `X-Report-File: 1` en éxito. Errores en texto plano sin SQL. |
 
-Backups en el servidor (UTC):
+Backups UTC:
 
-- `historial/generar_reporte.php.bak-20260825-123835`
-- `historial/reporte_config.php.bak-20260825-123835`
+- Límite 25: `*.bak-20260825-123835`
+- Overlay de descarga: `*.bak-20260825-131203`
 
-No hay secretos en estos archivos. No desplegar el ZIP de marzo: el wizard no existía ahí.
+No hay secretos en estos archivos. No desplegar el ZIP de marzo.

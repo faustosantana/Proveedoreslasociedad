@@ -15,7 +15,7 @@ Este repositorio es **público**. Este informe **no incluye** contraseñas, `.en
 | Causa raíz | **Confirmada** (JS `cloneNode()` + default PHP 25) |
 | Hotfix en servidor | **Desplegado** 12:38:35 UTC; re-verificado por RETR |
 | SQL “Todos” vs 25 | **423** vs **25** (misma query del wizard, sin filtros) |
-| Excel del wizard (UI) | Pendiente de **login de la aplicación** (la clave de cPanel/FTP no es la del portal) |
+| Excel del wizard (UI overlay) | **Parcheado** 13:12 UTC: `fetch` + Blob; el modal ya no queda en “Generando...” |
 | ZIP público / export viejo anónimo | Siguen expuestos — ver §F |
 
 ---

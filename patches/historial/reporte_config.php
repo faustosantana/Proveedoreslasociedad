@@ -890,9 +890,65 @@ if ($hasPhpSpreadsheet) {
         });
     }
 
-    // Envío del formulario
-    document.getElementById('reportForm').addEventListener('submit', function(e) {
+    let reporteDownloading = false;
+
+    // Mismos campos que el POST anterior, incluido limit=0 ("Todos los registros").
+    function buildReportFormData() {
+      const fd = new FormData();
+      document.querySelectorAll('#reportForm input, #reportForm select').forEach(input => {
+        if (!input.name) return;
+        if (input.type === 'checkbox' && !input.checked) return;
+        if (input.name !== 'limit' && (input.value === undefined || input.value === '')) return;
+        fd.append(input.name, input.value);
+      });
+      return fd;
+    }
+
+    function filenameFromDisposition(header, fallback) {
+      if (!header) return fallback;
+      const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+      if (star) {
+        try { return decodeURIComponent(star[1]); } catch (e) { /* ignore */ }
+      }
+      const quoted = /filename="([^"]+)"/i.exec(header);
+      if (quoted) return quoted[1];
+      const plain = /filename=([^;]+)/i.exec(header);
+      if (plain) return plain[1].trim().replace(/^["']|["']$/g, '');
+      return fallback;
+    }
+
+    function isGeneratedReport(response, blob) {
+      if (response.headers.get('X-Report-File') === '1') return true;
+      const ct = (response.headers.get('Content-Type') || '').toLowerCase();
+      if (ct.includes('text/html') || ct.includes('application/json') || ct.includes('text/plain')) return false;
+      if (ct.includes('spreadsheetml') || ct.includes('text/csv') || ct.includes('ms-excel')) return true;
+      return !!(blob && blob.size > 0 && (blob.type.includes('spreadsheet') || blob.type.includes('csv')));
+    }
+
+    function safeReportErrorMessage(raw) {
+      const fallback = 'No se pudo generar el reporte. Intenta nuevamente.';
+      if (!raw) return fallback;
+      const text = String(raw).replace(/<[^>]+>/g, '').trim();
+      if (!text || text.length > 180) return fallback;
+      if (/SQLSTATE|PDOException|stack trace|\/home\/|\/public_html|password|exception|Fatal error/i.test(text)) {
+        return fallback;
+      }
+      return text;
+    }
+
+    function setDownloadBusy(busy) {
+      const btn = document.getElementById('btnSubmit');
+      reporteDownloading = busy;
+      if (!btn) return;
+      btn.disabled = busy;
+      btn.setAttribute('aria-busy', busy ? 'true' : 'false');
+    }
+
+    // Envío del formulario: fetch + Blob para saber cuándo llegó la respuesta
+    // (un POST tradicional descarga el Excel pero deja el overlay "Generando..." abierto).
+    document.getElementById('reportForm').addEventListener('submit', async function(e) {
       e.preventDefault();
+      if (reporteDownloading) return;
 
       const campos = document.querySelectorAll('input[name="campos[]"]:checked').length;
       if (campos === 0) {
@@ -904,35 +960,66 @@ if ($hasPhpSpreadsheet) {
         return;
       }
 
-      // Convertir a form tradicional para envío POST.
-      // cloneNode() superficial en <select> omite los <option>, el navegador
-      // no envía el campo y PHP cae al default 25 (rompe "Todos" = 0).
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = 'generar_reporte.php';
-
-      document.querySelectorAll('#reportForm input, #reportForm select').forEach(input => {
-        if (!input.name) return;
-        if (input.type === 'checkbox' && !input.checked) return;
-        // Incluir limit=0 ("Todos los registros"); omitir el resto de vacíos.
-        if (input.name !== 'limit' && (input.value === undefined || input.value === '')) return;
-        const hidden = document.createElement('input');
-        hidden.type = 'hidden';
-        hidden.name = input.name;
-        hidden.value = input.value;
-        form.appendChild(hidden);
-      });
-
-      document.body.appendChild(form);
+      setDownloadBusy(true);
 
       Swal.fire({
         title: 'Generando reporte...',
         html: 'Por favor espera mientras se prepara tu descarga.',
-        didOpen: () => {
-          Swal.showLoading();
-          setTimeout(() => form.submit(), 500);
-        }
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        showConfirmButton: false,
+        didOpen: () => { Swal.showLoading(); }
       });
+
+      try {
+        const response = await fetch('generar_reporte.php', {
+          method: 'POST',
+          body: buildReportFormData(),
+          credentials: 'same-origin',
+          headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        });
+
+        const blob = await response.blob();
+
+        if (!response.ok || !isGeneratedReport(response, blob)) {
+          let raw = '';
+          try { raw = await blob.text(); } catch (readErr) { raw = ''; }
+          throw new Error(safeReportErrorMessage(raw));
+        }
+
+        const filename = filenameFromDisposition(
+          response.headers.get('Content-Disposition'),
+          'reporte_facturas.xlsx'
+        );
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+        setDownloadBusy(false);
+        await Swal.fire({
+          icon: 'success',
+          title: 'Reporte generado correctamente',
+          timer: 2200,
+          timerProgressBar: true,
+          showConfirmButton: false,
+          allowOutsideClick: false
+        });
+      } catch (err) {
+        setDownloadBusy(false);
+        await Swal.fire({
+          icon: 'error',
+          title: 'No se pudo generar el reporte. Intenta nuevamente.',
+          confirmButtonText: 'Entendido'
+        });
+      } finally {
+        setDownloadBusy(false);
+      }
     });
 
     // Inicializar

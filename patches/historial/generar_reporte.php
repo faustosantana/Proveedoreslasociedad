@@ -17,9 +17,20 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+function wizard_report_fail(string $publicMessage, int $code = 400): void {
+    if (!headers_sent()) {
+        http_response_code($code);
+        header('Content-Type: text/plain; charset=UTF-8');
+        header('X-Report-File: 0');
+        header('Cache-Control: no-store');
+    }
+    echo $publicMessage;
+    exit;
+}
+
 $campos = $_POST['campos'] ?? [];
 if (empty($campos) || !is_array($campos)) {
-    die('Seleccione al menos un campo.');
+    wizard_report_fail('Seleccione al menos un campo.');
 }
 
 $incluir_encabezados = isset($_POST['incluir_encabezados']);
@@ -67,7 +78,7 @@ foreach ($campos as $c) {
     if (isset($mapa_campos[$c])) $select_parts[] = $mapa_campos[$c];
 }
 
-if (empty($select_parts)) die('Campos inválidos.');
+if (empty($select_parts)) wizard_report_fail('Campos inválidos.');
 
 // Determinar aliases/result keys por campo seleccionado
 $alias_keys = [];
@@ -126,7 +137,7 @@ try {
     $stmt->execute($parametros);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (PDOException $e) {
-    die('Error en consulta: ' . $e->getMessage());
+    wizard_report_fail('No se pudo generar el reporte. Intenta nuevamente.', 500);
 }
 
 // Intentar usar PhpSpreadsheet si está presente
@@ -180,6 +191,8 @@ if ($useXlsx) {
     // Enviar archivo
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="'.$filename_base.'.xlsx"');
+    header('X-Report-File: 1');
+    header('Cache-Control: no-store');
     $writer = new Xlsx($spreadsheet);
     $writer->save('php://output');
     exit;
@@ -187,6 +200,8 @@ if ($useXlsx) {
     // Fallback CSV
     header('Content-Type: text/csv; charset=UTF-8');
     header('Content-Disposition: attachment; filename="'.$filename_base.'.csv"');
+    header('X-Report-File: 1');
+    header('Cache-Control: no-store');
     $out = fopen('php://output', 'w');
     // UTF-8 BOM
     fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));

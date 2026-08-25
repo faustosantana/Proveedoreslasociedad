@@ -49,11 +49,11 @@ El ID de proveedor **nunca** se toma de GET/POST.
 |---|---|---|---|---|---|---|---|---|
 | php/acciones-factura.php | GET LEGACY | sesión | admin/empresa + ownership en UPDATE | NO | NO | SÍ estado | — | **PARCHEADO** |
 | php/limpiar_facturas.php | POST | sesión | **admin** + CSRF | SÍ | NO | SÍ DELETE masivo (≥15d eliminada) | — | **PARCHEADO** |
-| historial.php (purge embebido) | GET página | sesión | cualquiera autenticado | NO | NO | SÍ DELETE masivo (≥15d) | CRITICAL | P0 restante (no este PR) |
-| acciones/eliminar_factura.php | GET | sesión | admin/empresa (UPDATE sin scope en WHERE) | NO | NO | SÍ estado | HIGH | P1 (UI historial) |
-| acciones/eliminar_factura_permanente.php | GET | sesión | admin/empresa | NO | NO | SÍ delete + archivos | HIGH | P1 |
+| historial.php | GET listado | sesión | scope por rol; **sin purge** | — | NO | NO (purge retirado) | — | **PARCHEADO** |
+| acciones/eliminar_factura.php | POST | sesión | admin/empresa + ownership en UPDATE | SÍ | NO | SÍ soft delete | — | **PARCHEADO** |
+| acciones/eliminar_factura_permanente.php | POST | sesión | admin/empresa + hard delete scoped | SÍ | NO | SÍ delete + unlink | CRITICAL | **PARCHEADO** (no ejecutado) |
 | acciones/actualizar_estado_factura.php | GET | sesión o token | empresa dueña / token=admin | NO | SÍ (sin TTL) | SÍ estado | HIGH | P1 emails — **no tocar aún** |
-| php/restaurar_factura.php | POST | sesión | admin/empresa (UPDATE sin scope en WHERE) | ? | NO | SÍ estado | HIGH | P2 |
+| php/restaurar_factura.php | POST | sesión | admin/empresa + ownership en UPDATE | SÍ | NO | SÍ estado | — | **PARCHEADO** |
 | acciones/editar_factura.php | GET+POST | sesión débil | incompleta | NO | NO | SÍ | HIGH | P2 |
 | acciones/validar_proveedor.php | GET | token | token de alta | NO | NO | SÍ proveedores | HIGH | P2 (emails alta) |
 | PanelAdmin/acciones/toggle_empresa.php | GET | admin | rol admin | NO | NO | SÍ activo | MEDIUM | P3 |
@@ -63,21 +63,15 @@ El ID de proveedor **nunca** se toma de GET/POST.
 | php/registrar_abono.php | POST | sesión | CSRF sí; ownership pendiente | SÍ | NO | SÍ pago | MEDIUM | finfo siguiente |
 | php/crear_factura_admin.php | POST | admin | rol admin | ? | NO | SÍ alta | MEDIUM | finfo siguiente |
 
-Copia del parche: `patches/idor/acciones-factura.php`, `patches/idor/limpiar_facturas.php`.
+Copia del parche: `patches/idor/` (acciones-factura, limpiar_facturas, historial, eliminar_*, restaurar, JS).
 
-No se parchearon los demás GET de escritura en esta subfase. No MIME/`finfo` todavía.
+## Siguiente
 
-## Siguiente (sin parche masivo)
-
-1. `historial.php` purge embebido (mismo DELETE de 15 días; corre al ver el listado)
-2. `acciones/eliminar_factura.php`
-3. `acciones/eliminar_factura_permanente.php`
-4. `php/restaurar_factura.php`
-5. `crear_factura_admin.php` + `registrar_abono.php` con `finfo`
-6. Cookies HttpOnly/SameSite
-7. Documentos privados (no bloquear `/archivos/` todavía)
-8. CSRF en GET restantes de la UI
-9. Preparar rotación de secretos HMAC — **no rotar todavía**
+1. `crear_factura_admin.php` + `registrar_abono.php` con `finfo`
+2. Cookies HttpOnly/SameSite (probar login)
+3. Documentos: UI → `descargar_documento.php`; no bloquear `/archivos/` todavía
+4. HMAC CURRENT/PREVIOUS — **no rotar todavía**
+5. GET admin toggle/eliminar_* PanelAdmin
 
 ## Documentos
 

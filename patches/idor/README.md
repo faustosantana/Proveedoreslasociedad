@@ -49,6 +49,7 @@ El ID de proveedor **nunca** se toma de GET/POST.
 |---|---|---|---|---|---|---|---|---|
 | php/acciones-factura.php | GET LEGACY | sesión | admin/empresa + ownership en UPDATE | NO | NO | SÍ estado | — | **PARCHEADO** |
 | php/limpiar_facturas.php | POST | sesión | **admin** + CSRF | SÍ | NO | SÍ DELETE masivo (≥15d eliminada) | — | **PARCHEADO** |
+| historial.php (purge embebido) | GET página | sesión | cualquiera autenticado | NO | NO | SÍ DELETE masivo (≥15d) | CRITICAL | P0 restante (no este PR) |
 | acciones/eliminar_factura.php | GET | sesión | admin/empresa (UPDATE sin scope en WHERE) | NO | NO | SÍ estado | HIGH | P1 (UI historial) |
 | acciones/eliminar_factura_permanente.php | GET | sesión | admin/empresa | NO | NO | SÍ delete + archivos | HIGH | P1 |
 | acciones/actualizar_estado_factura.php | GET | sesión o token | empresa dueña / token=admin | NO | SÍ (sin TTL) | SÍ estado | HIGH | P1 emails — **no tocar aún** |
@@ -62,17 +63,21 @@ El ID de proveedor **nunca** se toma de GET/POST.
 | php/registrar_abono.php | POST | sesión | CSRF sí; ownership pendiente | SÍ | NO | SÍ pago | MEDIUM | finfo siguiente |
 | php/crear_factura_admin.php | POST | admin | rol admin | ? | NO | SÍ alta | MEDIUM | finfo siguiente |
 
-Copia del parche: `patches/idor/acciones-factura.php`. Backup vivo `*.bak-20260825-180631`.
+Copia del parche: `patches/idor/acciones-factura.php`, `patches/idor/limpiar_facturas.php`.
 
-No se parchearon los demás GET de escritura en esta subfase.
+No se parchearon los demás GET de escritura en esta subfase. No MIME/`finfo` todavía.
 
-## Siguiente subfase (no ejecutada)
+## Siguiente (sin parche masivo)
 
-1. `crear_factura_admin.php` + `registrar_abono.php` con `finfo`
-2. Cookies HttpOnly/SameSite (riesgo: muchos `session_start()` sueltos)
-3. Documentos privados (no bloquear `/archivos/` todavía)
-4. CSRF en GET restantes de la UI
-5. Preparar rotación de secretos HMAC — **no rotar todavía**
+1. `historial.php` purge embebido (mismo DELETE de 15 días; corre al ver el listado)
+2. `acciones/eliminar_factura.php`
+3. `acciones/eliminar_factura_permanente.php`
+4. `php/restaurar_factura.php`
+5. `crear_factura_admin.php` + `registrar_abono.php` con `finfo`
+6. Cookies HttpOnly/SameSite
+7. Documentos privados (no bloquear `/archivos/` todavía)
+8. CSRF en GET restantes de la UI
+9. Preparar rotación de secretos HMAC — **no rotar todavía**
 
 ## Documentos
 

@@ -57,6 +57,8 @@ Pendientes:
 GET destructivos restantes:
 HMAC email + PanelAdmin GET + validar_proveedor. Los GET de factura eliminar/restaurar/limpiar/historial-purge: cerrados.
 
+Justech (proveedor): GET eliminar y permanente → **405** `Método no permitido`. POST sin CSRF eliminar/restaurar → **403** `Token de seguridad inválido.` Sin redirect de éxito. `fact_6a7c79e56fb4c` intacta.
+
 Estado:
 PARTIAL (núcleo facturas PASS; PanelAdmin/HMAC pendientes)
 

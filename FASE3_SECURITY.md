@@ -50,6 +50,7 @@ Después: sesión → POST → CSRF (`validarTokenCSRF` / `$_SESSION['csrf_token
 - Backup: `php/limpiar_facturas.php.bak-20260825-184750` (HTTP 403; SHA `54fa05d1216c03791628c75a2b134beb18985307d5e6f76d03c0fd5bd9ef6738`)
 - SHA después: `3f582a8401cc4358019dcb0480a98889fd9184d4da1e5799603874b79dc778d8`
 - Anónimo GET/POST: **401** `No autorizado`. Home **200**.
-- No se ejecutó POST de admin. DELETE inalcanzable en las pruebas.
+- Justech GET: **405** `Método no permitido`. POST sin CSRF y con `csrf_token=fake`: **403** `Token de seguridad inválido.` DELETE no se alcanzó (rol admin va después del CSRF).
+- No se ejecutó POST de admin. **REGISTROS ELIMINADOS DURANTE PRUEBAS = 0.** **ARCHIVOS ELIMINADOS = 0.**
 
 La misma condición de purge sigue en `historial.php` (cada carga autenticada). Inventario; no parcheado en esta subfase.

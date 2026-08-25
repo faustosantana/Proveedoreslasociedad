@@ -11,16 +11,62 @@ session_start();
  */
 require_once '../Base_de_datos/config.php';
 require_once '../Base_de_datos/correos_config.php';
+require_once __DIR__ . '/autorizacion_facturas.php';
 
-$tipo_usuario = $_SESSION['tipo'] ?? null;
-if (!$tipo_usuario) {
-    http_response_code(401);
-    exit('No autorizado');
+function ss_guardar_abono_finfo(string $campo, string $prefijo): ?string
+{
+    if (!isset($_FILES[$campo]) || $_FILES[$campo]['error'] === UPLOAD_ERR_NO_FILE) {
+        return null;
+    }
+    if ($_FILES[$campo]['error'] !== UPLOAD_ERR_OK) {
+        http_response_code(400);
+        exit('Error al subir el archivo.');
+    }
+    if ($_FILES[$campo]['size'] > 5 * 1024 * 1024) {
+        http_response_code(400);
+        exit('El archivo es demasiado grande. Máx 5MB.');
+    }
+    $ext = strtolower((string) pathinfo($_FILES[$campo]['name'], PATHINFO_EXTENSION));
+    $permitidas = [
+        'pdf' => ['application/pdf'],
+        'jpg' => ['image/jpeg'],
+        'jpeg' => ['image/jpeg'],
+        'png' => ['image/png'],
+    ];
+    if (!isset($permitidas[$ext])) {
+        http_response_code(400);
+        exit('Tipo de archivo no permitido.');
+    }
+    if (!function_exists('finfo_open')) {
+        http_response_code(500);
+        exit('No se pudo validar el archivo.');
+    }
+    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+    $mime = $finfo ? finfo_file($finfo, $_FILES[$campo]['tmp_name']) : '';
+    if ($finfo) {
+        finfo_close($finfo);
+    }
+    if (!in_array($mime, $permitidas[$ext], true)) {
+        http_response_code(400);
+        exit('El contenido del archivo no es válido.');
+    }
+    $nombre = $prefijo . uniqid('', true) . '.' . $ext;
+    $dir = '../archivos/comprobantes_de_pagos/';
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    $ruta = $dir . $nombre;
+    if (!move_uploaded_file($_FILES[$campo]['tmp_name'], $ruta)) {
+        http_response_code(500);
+        exit('Error al guardar el archivo.');
+    }
+    return 'archivos/comprobantes_de_pagos/' . $nombre;
 }
 
-if (!isset($_POST['csrf_token']) || !validarTokenCSRF($_POST['csrf_token'])) {
-    http_response_code(403);
-    exit('Token de seguridad inválido.');
+$tipo = ss_require_tipo_sesion();
+if (!$tipo) {
+    http_response_code(401);
+    exit('No autorizado');
 }
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
@@ -28,59 +74,26 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit('Método no permitido');
 }
 
+if (!isset($_POST['csrf_token']) || !validarTokenCSRF($_POST['csrf_token'])) {
+    http_response_code(403);
+    exit('Token de seguridad inválido.');
+}
+
+if ($tipo === 'proveedor') {
+    http_response_code(403);
+    exit('No autorizado');
+}
 
 $id_factura = $_POST['id_factura_abono'] ?? null;
 $monto_abono = $_POST['monto_abono'] ?? null;
 $comentario = trim($_POST['comentario_abono'] ?? '');
 
-// Validar archivo comprobante
-$link_comprobante = null;
-if (isset($_FILES['comprobante_abono']) && $_FILES['comprobante_abono']['error'] === UPLOAD_ERR_OK) {
-    $permitidos = ['application/pdf', 'image/jpeg', 'image/png'];
-    $archivo = $_FILES['comprobante_abono'];
-    if (!in_array($archivo['type'], $permitidos)) {
-        http_response_code(400);
-        exit('Tipo de archivo no permitido.');
-    }
-    if ($archivo['size'] > 5 * 1024 * 1024) { // 5MB
-        http_response_code(400);
-        exit('El archivo es demasiado grande. Máx 5MB.');
-    }
-    $ext = pathinfo($archivo['name'], PATHINFO_EXTENSION);
-    $nombre_archivo = uniqid('abono_') . '_' . time() . '.' . $ext;
-    $ruta_destino = '../archivos/comprobantes_de_pagos/' . $nombre_archivo;
-    if (!move_uploaded_file($archivo['tmp_name'], $ruta_destino)) {
-        http_response_code(500);
-        exit('Error al guardar el comprobante.');
-    }
-    $link_comprobante = 'archivos/comprobantes_de_pagos/' . $nombre_archivo;
-} else {
+$link_comprobante = ss_guardar_abono_finfo('comprobante_abono', 'abono_');
+if ($link_comprobante === null) {
     http_response_code(400);
     exit('Debe adjuntar un comprobante de pago.');
 }
-
-// Procesar documento adicional (opcional)
-$link_documento_adicional = null;
-if (isset($_FILES['documento_adicional_abono']) && $_FILES['documento_adicional_abono']['error'] === UPLOAD_ERR_OK) {
-    $permitidos = ['application/pdf', 'image/jpeg', 'image/png'];
-    $archivo2 = $_FILES['documento_adicional_abono'];
-    if (!in_array($archivo2['type'], $permitidos)) {
-        http_response_code(400);
-        exit('Tipo de documento adicional no permitido.');
-    }
-    if ($archivo2['size'] > 5 * 1024 * 1024) {
-        http_response_code(400);
-        exit('El documento adicional es demasiado grande. Máx 5MB.');
-    }
-    $ext2 = pathinfo($archivo2['name'], PATHINFO_EXTENSION);
-    $nombre_archivo2 = uniqid('abono_doc2_') . '_' . time() . '.' . $ext2;
-    $ruta_destino2 = '../archivos/comprobantes_de_pagos/' . $nombre_archivo2;
-    if (!move_uploaded_file($archivo2['tmp_name'], $ruta_destino2)) {
-        http_response_code(500);
-        exit('Error al guardar el documento adicional.');
-    }
-    $link_documento_adicional = 'archivos/comprobantes_de_pagos/' . $nombre_archivo2;
-}
+$link_documento_adicional = ss_guardar_abono_finfo('documento_adicional_abono', 'abono_doc2_');
 
 if (!$id_factura || !is_numeric($monto_abono) || $monto_abono <= 0) {
     http_response_code(400);
@@ -91,12 +104,16 @@ $monto_abono = round(floatval($monto_abono), 2);
 
 try {
     // Verificar que la factura exista y sea a crédito
-    $stmt = $pdo->prepare('SELECT total, es_credito, estado FROM facturas WHERE id_factura = ?');
+    $stmt = $pdo->prepare('SELECT total, es_credito, estado, id_proveedor, id_empresa FROM facturas WHERE id_factura = ?');
     $stmt->execute([$id_factura]);
     $factura = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!$factura || $factura['es_credito'] !== 'si') {
         http_response_code(400);
         exit('Factura no válida para abonos.');
+    }
+    if (!ss_puede_ver_factura($factura)) {
+        http_response_code(404);
+        exit('Factura no encontrada.');
     }
     if ($factura['estado'] === 'pagada') {
         http_response_code(400);

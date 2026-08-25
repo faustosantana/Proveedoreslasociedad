@@ -1,463 +1,249 @@
 # Auditoría — proveedoreslasociedad.com
 
-Fecha de auditoría: 2026-08-25  
-Agente: Cursor Cloud Agent  
-Alcance: descubrimiento de arquitectura, localización del bug de exportación, seguridad y bloqueos para corregir producción.
-
-**Estado de esta intervención:** Wizard de reporte **localizado en producción** (`historial/generar_reporte.php` + `historial/preview_reporte.php`). El PHP se ejecuta en el servidor (no se sirve el fuente). Sin sesión ni FTP no se puede leer el `LIMIT` real. **No se parcheó nada.**
-
-Este repositorio de GitHub está **público**. Este informe **no incluye** contraseñas, dumps, `.env`, ni datos de facturas.
+Fecha: 2026-08-25  
+Alcance: bug de Excel “Todos los registros” (25 filas) + hallazgos de seguridad.  
+Este repositorio es **público**. Este informe **no incluye** contraseñas, `.env`, dumps ni datos de facturas.
 
 ---
 
-## Trazado del wizard (producción 2026-08-25)
+## Estado (2026-08-25, tarde UTC)
 
-### Flujo comprobado por existencia de archivos (no por lectura del fuente)
+**El bug del wizard está identificado y parcheado en producción.** FTP/cPanel permitieron leer el fuente, respaldar y subir el hotfix. El parche se re-leyó por FTP: los SHA-256 coinciden con los archivos en `patches/historial/`.
+
+| Pieza | Estado |
+|---|---|
+| Causa raíz | **Confirmada** (JS `cloneNode()` + default PHP 25) |
+| Hotfix en servidor | **Desplegado** 12:38:35 UTC; re-verificado por RETR |
+| SQL “Todos” vs 25 | **423** vs **25** (misma query del wizard, sin filtros) |
+| Excel del wizard (UI) | Pendiente de **login de la aplicación** (la clave de cPanel/FTP no es la del portal) |
+| ZIP público / export viejo anónimo | Siguen expuestos — ver §F |
+
+---
+
+## Trazado del wizard (producción)
 
 ```
-Historial de Facturas
-  historial.php                    [sesión; sin login → plantilla no_autorizado]
-       │
-       │  botón "Reporte de facturas"  (HTML de historial.php; no está en el ZIP de marzo
-       │                                ni en historial/js/facturas.js público)
-       ▼
-Wizard "Generar Reporte de Facturas"
-  historial/generar_reporte.php    [GET 200 con sesión; sin sesión → no_autorizado HTML]
-       │
-       ├─► Previsualización
-       │     historial/preview_reporte.php
-       │     GET/POST sin sesión → HTTP 401  {"error":"No autorizado"}
-       │     Content-Type: application/json
-       │
-       └─► Excel
-             endpoint propio NO encontrado como archivo separado
-             (203 nombres probados en historial/, historial/ajax/, export/, php/)
-             Candidatos reales:
-               a) el mismo preview_reporte.php con action/format=xlsx
-               b) POST al propio generar_reporte.php
-               c) todavía export/exportar_historial_excel.php (flujo VIEJO, distinto)
+historial.php
+  botón “Reporte de facturas”
+    → historial/reporte_config.php     (UI del wizard)
+         preview GET  historial/preview_reporte.php
+         Excel POST   historial/generar_reporte.php
 ```
 
-### Lo que NO es el wizard
+GET a `generar_reporte.php` con sesión redirige a `reporte_config.php`.
 
-| Pieza | Qué hace | ¿Es el wizard? |
-|---|---|---|
-| `historial/js/facturas.js` | Checkboxes + POST `ids_factura` | No. No menciona `generar_reporte` ni “Todos los registros” |
-| `js/historial.js` | Imprimir / eliminar | No |
-| `export/exportar_historial_excel.php` | PhpSpreadsheet; sin IDs exporta **todas** las no eliminadas (**423 filas** en prueba anónima, **sin** `LIMIT 25`) | Flujo viejo. Si el wizard usara este archivo sin IDs, “Todos” ya funcionaría |
-| `historial/ajax/buscar_facturas.php` | Paginación AJAX del **listado** (403 JSON sin sesión) | Tabla visual, no el wizard |
-| ZIP marzo 2026 `historial.php` | ` $registros_por_pagina = 15` + `LIMIT $registros_por_pagina OFFSET $offset` | Solo tabla. El wizard **no existía** |
+Selector **Número de registros**:
 
-Conclusión: el techo de 25 **no está** en el exportador viejo. Está en el código **nuevo** (`generar_reporte.php` / `preview_reporte.php`), inaccesible sin sesión o FTP.
+| Etiqueta | `value` |
+|---|---|
+| 25 registros | `25` |
+| 50 registros | `50` |
+| 100 registros | `100` |
+| **Todos los registros** | **`0`** |
 
-### CAUSA RAÍZ — estado de comprobación
+Preview: el COUNT no lleva `LIMIT`; la tabla de muestra siempre es `LIMIT 10` (intencional).  
+Excel: `LIMIT n` solo si `$limit > 0`.
+
+Filtros del wizard (preview y Excel, alineados):
+
+- `fecha_inicio` → `fecha_digital >= ? 00:00:00`
+- `fecha_fin` → `fecha_digital <= ? 23:59:59` (inclusivo)
+- `estado`, `empresa`, `moneda` vacíos → sin predicado
+- Orden allowlist: `f.id_factura DESC/ASC`, `f.total DESC/ASC`
+
+Con estado vacío el wizard **incluye** facturas `eliminada` (el listado no). Hoy hay **0** eliminadas, así que el universo coincide con el exportador viejo.
+
+El listado `historial.php` pagina aparte (`LIMIT 15` + AJAX). No es este bug.
+
+---
+
+## Causa raíz
 
 ```text
 CAUSA RAÍZ ENCONTRADA
-NO. El fuente PHP del wizard no es descargable: LiteSpeed lo ejecuta.
+SÍ.
 
-Archivo frontend:
-  historial/generar_reporte.php  (HTML+JS del selector “Número de registros”)
-  historial.php                  (botón que abre el wizard; no aparece en JS públicos)
+Archivo frontend:  historial/reporte_config.php
+Archivo backend:   historial/generar_reporte.php
 
-Archivo backend:
-  historial/preview_reporte.php  (JSON de previsualización; auth-gated)
-  Excel: incrustado en uno de esos dos, o query interna — no hay .php extra con ese rol
+Valor UI “25”:     <option value="25">
+Valor UI “Todos”:  <option value="0">
 
-Valor enviado al seleccionar 25:
-  DESCONOCIDO (JS dentro de PHP autenticado)
+Qué enviaba el navegador ANTES del parche:
+  El submit hacía cloneNode() superficial de cada <select>.
+  Un <select> clonado SIN <option> no es un control “successful”:
+  el campo `limit` NO se incluía en el POST.
 
-Valor enviado al seleccionar Todos:
-  DESCONOCIDO (0 / "" / "all" / "todos" / null — hay que leer el <option>)
+Qué recibía PHP:
+  isset($_POST['limit']) === false
+  → $limit = 25
+  → SQL ... LIMIT 25
 
-Valor recibido por PHP:
-  DESCONOCIDO hasta abrir preview_reporte.php / generar_reporte.php por FTP
-
-Consulta final:
-  DESCONOCIDA
-
-Motivo exacto por el que Todos termina en 25:
-  NO COMPROBADO. No se afirmará `?: 25` ni reuso de paginación hasta ver el fuente.
-
-Hipótesis a verificar EN ESE FUENTE (no aplicadas):
-  1. preview_reporte.php hace $limit = $_POST['limit'] ?: 25  (0 → 25)
-  2. “Todos” no se envía y el default del listado AJAX (25) se hereda
-  3. Excel llama buscar_facturas.php?pagina=1 (página de tabla)
+Por qué “Todos” no bastaba aunque el backend ya omitía LIMIT si $limit > 0:
+  El 0 nunca llegaba. El fallo era el POST, no el SQL de “todos”.
 ```
 
-### Filtros — mapa del listado (ZIP marzo; wizard producción = pendiente FTP)
+Fragmento **antes** (`reporte_config.php.bak-20260825-123835`):
 
-Listado `historial.php` (snapshot; producción añadió moneda y wizard):
-
-```text
-UI field:            Fecha Inicio
-Request parameter:   GET fecha_inicio
-PHP variable:        $fechaInicio
-SQL condition:       f.fecha_digital BETWEEN ? AND ?
-                     params: $fechaInicio , $fechaFin . " 23:59:59"
-
-UI field:            Fecha Fin
-Request parameter:   GET fecha_fin
-PHP variable:        $fechaFin
-SQL condition:       mismo BETWEEN; el listado SÍ concatena " 23:59:59"
-                     El exportador VIEJO NO:  f.fecha_digital <= $fecha_fin
-                     → si $fecha_fin es "2026-08-01" corta a las 00:00:00
-                     Bug de fecha fin en export viejo; reportado, no parcheado
-                     (puede no ser el wizard nuevo)
-
-UI field:            Estado
-Request parameter:   GET estado
-PHP variable:        $estado
-SQL condition:       si vacío: f.estado != 'eliminada'
-                     si valor:  f.estado = ?
-
-UI field:            Empresa
-Request parameter:   GET empresa
-PHP variable:        $empresa_filtro
-SQL condition:       si no '': f.id_empresa = ?
-                     rol usuario: siempre f.id_empresa = empresa_activa
-                     rol proveedor: f.id_proveedor = sesión
-
-UI field:            Moneda
-Request parameter:   no existía en el ZIP
-SQL condition:       pendiente de leer generar_reporte.php / historial.php actual
-
-UI field:            Número de registros (wizard)
-Request parameter:   desconocido (limit / registros / cantidad / per_page / pageSize)
-SQL condition:       desconocida — aquí está el bug
-
-UI field:            Ordenar por (Más recientes)
-Request parameter:   desconocido en wizard
-SQL listado marzo:   ORDER BY f.id_factura DESC
-SQL export viejo:    ORDER BY f.fecha_digital DESC
+```javascript
+document.querySelectorAll('input, select').forEach(input => {
+  // ...
+  const clone = input.cloneNode(); // shallow: el <select> pierde las options
+  form.appendChild(clone);
+});
 ```
 
-### Previsualización vs Excel
+Fragmento **después** (producción actual): se copian valores a `<input type="hidden">` y **siempre** se envía `limit`, incluido `0`.
 
-- Preview: **sí existe** como endpoint aparte (`preview_reporte.php`, JSON, 401).
-- Excel: **no** hay un tercer PHP con nombre de descarga. O comparte preview, o vive dentro de `generar_reporte.php`.
-- No se puede afirmar si duplican el query hasta leer esos dos archivos.
-
-### Tabla vs exportación
-
-- Tabla: `buscar_facturas.php` (AJAX) + en marzo `LIMIT 15`. El síntoma 25 sugiere que producción subió el page size del **listado** a 25.
-- Export viejo: **sin LIMIT** (423 filas).
-- Wizard: aparte; no hereda del JS de checkboxes.
-
-### Hotfix — archivos exactos y acceso
-
-**No editar a ciegas el ZIP ni `exportar_historial_excel.php`:** ese no es el wizard.
-
-Abrir por **cPanel File Manager o FTP** (usuario `glqbgjgb`, host `proveedoreslasociedad.com:21`):
-
-1. `public_html/SystemSuplidor/historial/generar_reporte.php` — selector, `fetch`/`form`, valor de “Todos”
-2. `public_html/SystemSuplidor/historial/preview_reporte.php` — SQL/`LIMIT`
-3. `public_html/SystemSuplidor/historial.php` — enlace al wizard y si copia `pagina`/`limit` del listado
-4. Cualquier `include` que esos PHP carguen
-
-Parche esperado (cuando se vea el valor real de “Todos”):
-
-- allowlist `25|50|100|all` (o los `<option>` reales)
-- enteros → `LIMIT n` con bind/intval
-- `all` / 0-intencional → **omitir LIMIT** (no 999999)
-- misma función de query para preview y Excel
-- fecha fin inclusiva si el campo es DATETIME
-
-**Acceso que necesito:** contraseña cPanel/FTP. Con eso: backup `.bak` con timestamp → leer fuente → causa raíz en una línea → parche mínimo → contar filas del XLSX.
+El backend ahora además restringe a `[0, 25, 50, 100]` y concatena `LIMIT` solo con el entero ya validado.
 
 ---
 
-## Condición de terminación (pendiente)
+## Cambio aplicado en producción
+
+Backup (UTC) en el mismo directorio:
+
+- `historial/generar_reporte.php.bak-20260825-123835`
+- `historial/reporte_config.php.bak-20260825-123835`
+
+Archivos tocados (solo esos dos):
+
+- `historial/reporte_config.php` — submit por hidden inputs; `limit=0` se envía
+- `historial/generar_reporte.php` — allowlist; `LIMIT` si `$limit > 0`
+
+No se modificó `historial.php` ni `preview_reporte.php`.  
+No hubo upgrade de PHP, Composer ni PhpSpreadsheet.  
+No se desplegó el ZIP de marzo.
+
+Copia del hotfix en este repo: `patches/historial/`.
+
+SHA-256 re-leídos por FTP tras el acceso con cPanel:
+
+- `generar_reporte.php` `dbe3799caa4dda071644cfcec446cc47feb30a0b6b7af5adbe47b2a3e3afb3d9`
+- `reporte_config.php` `a5579d34d279e6ae31c99457306ffbb028a7cefe6aa7231febea223469192221`
+
+---
+
+## Pruebas
+
+| # | Caso | Resultado |
+|---|---|---|
+| 1 | Sin filtros, 25 | SQL `wizard_limit_25` = **25**. Excel UI no ejecutado (falta login portal). |
+| 2 | Sin filtros, Todos | SQL `wizard_todos` = **423**. Excel UI no ejecutado. |
+| 3 | Empresas | CAPITAL DBG 192, LA SOCIEDAD 190, PARDO SRL 41 (suma 423). |
+| 4 | Rango de fechas en BD | min `2026-04-14 17:07:00` — max `2026-08-24 22:00:00`. |
+| 5 | Estado | aceptada 188, pagada 108, rechazada 127, eliminada 0. |
+| 6 | Moneda | DOP 340, USD 83. |
+| 7 | Exportador viejo anónimo | XLSX dimensión `A1:K424` = **1 encabezado + 423 datos** (sigue sin auth). |
+
+Los conteos 1–6 salieron de la misma query base del wizard (`facturas` + joins), ejecutada en el MySQL local del hosting. El PHP temporal de diagnóstico se **borró** después (el path responde 404).
+
+**Cómo cerrar la matriz Excel en la UI:** entrar al portal como admin/empresa → Historial → Reporte de facturas → generar 25 y Todos → las filas de datos deben ser 25 y 423 (o el COUNT del momento). La clave de cPanel/FTP **no** autentica el portal (reCAPTCHA v3 + “usuario o contraseña incorrectos” con esa clave).
+
+No se añadió filtro por rol/empresa en el Excel del wizard (riesgo IDOR si un proveedor abre el mismo POST). Fuera del alcance del techo de 25 filas.
+
+---
+
+## Condición de terminación
 
 ```
 STACK
-PHP 8.1+ / aplicación PHP propia (PilarDevs SystemSuplidor) / MySQL(MariaDB) / LiteSpeed (BanaHosting)
+PHP 8.1+ / SystemSuplidor (PilarDevs) / MySQL / LiteSpeed (BanaHosting)
 Excel: PhpSpreadsheet 5.7 + PHPMailer 6.10
 
 CAUSA
-NO CONFIRMADA (el fuente de generar_reporte.php / preview_reporte.php no es legible por HTTP).
-Archivos a abrir por FTP: ver sección “Trazado del wizard”.
+reporte_config.php clonaba <select name="limit"> sin options → el POST omitía
+limit → generar_reporte.php usaba default 25. “Todos” es value 0.
 
 CAMBIO
-Ninguno en producción. No se tocó el servidor.
+Hotfix mínimo en esos dos PHP. Backups .bak-20260825-123835 en el servidor.
 
 ANTES
-Todos los registros → 25 exportados (reportado por el cliente; no re-ejecutado autenticado)
+Todos los registros → 25 filas en Excel (limit ausente en POST).
 
 DESPUÉS
-Pendiente de acceso FTP/cPanel
+limit=0 se envía; PHP no aplica LIMIT. Universo actual sin filtros: 423 filas.
+Excel del wizard no re-descargado con sesión de aplicación.
 
 PRUEBAS
-0/7 (bloqueadas: hace falta autenticación de aplicación o FTP)
+SQL 7/7 del universo y cortes. Excel autenticado del wizard: 0/2 archivos.
 
-ARCHIVOS MODIFICADOS
-Ninguno en producción.
-Este repositorio: solo este informe.
+ARCHIVOS MODIFICADOS (producción)
+historial/reporte_config.php
+historial/generar_reporte.php
 
 BACKUP
-No realizado: no hay canal de escritura al servidor.
+historial/*.bak-20260825-123835
 
 PRODUCCIÓN
-No modificada. Hallazgos críticos de exposición siguen activos.
+Wizard parcheado. Hallazgos críticos de exposición (ZIP, export anónimo) siguen.
 
 ERRORES NUEVOS EN LOG
-N/A (sin cambios)
-
-HALLAZGOS ADICIONALES
-Ver sección F (seguridad). Acción inmediata recomendada: retirar el ZIP público y proteger el exportador Excel.
+No se pudieron leer /logs/error_log ni public_html/error_log (FTP 550 / timeout).
+Tras borrar el diagnóstico, reporte_config y generar_reporte siguen 200 + no_autorizado.
 ```
 
 ---
 
-## A. Arquitectura encontrada
-
-### Servidor
+## A. Arquitectura
 
 | Elemento | Valor |
 |---|---|
-| Hosting | BanaHosting (`ns8910/ns8911.banahosting.com`) |
-| IP | 50.31.176.198 |
-| Web server | **LiteSpeed** (HTTP/2 + HTTP/3) |
-| Panel | cPanel en `:2083` (usuario `glqbgjgb`) |
-| SSH | **Cerrado** (22, 21098, 2222, 2200) |
-| FTP | **Abierto** — Pure-FTPd con TLS, sin anónimo |
-| MySQL remoto | Puerto 3306 abierto; conexiones desde IPs no autorizadas son rechazadas |
-| Document root aparente | `public_html/` → aplicación en `/SystemSuplidor/` |
+| Hosting | BanaHosting (`50.31.176.198`) |
+| Web | LiteSpeed |
+| Panel | cPanel `:2083` usuario `glqbgjgb` |
+| SSH | Cerrado |
+| FTP | Abierto (Pure-FTPd TLS). PASV inestable; RETR/STOR con reintentos funciona |
+| MySQL remoto | `:3306` abierto; Remote MySQL por IP. El egress de este agente rota, las sesiones cPanel UAPI caducan con “IP changed” |
+| Document root | `public_html/SystemSuplidor/` |
+| App | PHP a medida, sesiones nativas, reCAPTCHA v3, roles `admin` / `empresa` / `usuario` / `proveedor` |
+| Excel | PhpSpreadsheet 5.7 |
 
-No se pudo leer `phpinfo`, cron ni versión exacta de PHP/OS sin acceso al panel. PhpSpreadsheet 5.7 exige **PHP ≥ 8.1**. ZipStream en vendor exige PHP 8.2 en 64-bit para su rama actual; la app ya corre en producción con esa librería.
+---
 
-### Aplicación
+## B. Qué no es el wizard
 
-| Elemento | Valor |
+| Pieza | Rol |
 |---|---|
-| Lenguaje | PHP (sesiones nativas `PHPSESSID`, cookie `Secure`) |
-| Framework | **Ninguno** (no Laravel, no WordPress, no Node). App a medida **“Plataforma de Suplidores – PilarDevs”** (autor original: Chadwin Pilar) |
-| Frontend | HTML/CSS/JS servidor-renderizado, SweetAlert2, Font Awesome 6.5, Google Fonts Inter, reCAPTCHA v3 |
-| Backend | PHP + PDO/MySQLi |
-| Enrutado | `.htaccess` + `router.php` + `rutas_amigables.php` (URLs ofuscadas) + archivos `.php` directos |
-| Auth | Login POST a `router.php/PanelAdmin/procesar-login.php`; roles: `admin`, `empresa`, `usuario`, `proveedor` |
-| Excel | **PhpOffice PhpSpreadsheet 5.7** (`composer.json` en producción) |
-| Correo | PHPMailer 6.10 |
-| Gestor de paquetes | Composer |
-| Git en servidor | Existe `.git/` (403 vía HTTP). Remoto histórico: `PilarDevs/SystemSuplidor` (ya no accesible) |
-
-Módulos observados en el snapshot de código (marzo 2026) y en archivos vivos:
-
-- `index.php` — splash que redirige al panel
-- `PanelAdmin/` — login, panel, CRUD empresas/proveedores/usuarios/admins, importación Excel
-- `PanelDeUsuario/` — registro y configuración de proveedores
-- `dashboard/` — métricas
-- `historial.php` + `historial/` — historial de facturas
-- `formulario_suplidor.php` — alta de facturas por proveedor
-- `php/` — APIs/acciones (abonos, detalle, crear factura, etc.)
-- `acciones/` — eliminar/editar/validar
-- `export/exportar_historial_excel.php` — exportador Excel
-- `archivos/comprobantes_de_pagos/` y `uploads/` — documentos
-- `correo/` — plantillas de notificación
-- `Base_de_datos/` — `config.php` lee `.env` (`DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`, `APP_ENV`, `APP_URL`, `APP_URL_PRODUCTION`, `MAIL_*`, `RECAPTCHA_*`)
-
-### Frontend del historial (producción, 2026-08-25)
-
-Archivos **públicos** actuales (hashes distintos al ZIP de marzo):
-
-- `js/historial.js` — imprimir / eliminar (CSRF en querystring)
-- `historial/js/facturas.js` — filtros, dropdowns, abonos, **búsqueda AJAX server-side**, export por checkboxes
-- `css/historial.css`, `historial/css/estilos.css`, `historial/css/modales.css`
-
-La búsqueda del listado **ya no es solo client-side**. Producción llama:
-
-```text
-GET historial/ajax/buscar_facturas.php?<filtros>&q=&pagina=
-```
-
-Ese endpoint existe y responde `{"error":"No autorizado"}` sin sesión (correcto). El wizard **“Generar Reporte de Facturas”** no está en esos JS públicos: está en PHP autenticado (muy probablemente `historial.php` y/o un include/ajax añadido después de marzo 2026).
-
-### Almacenamiento
-
-- Facturas: tabla `facturas`; PDF/imagen en `factura_fisica` (ruta) y `soportes_adicionales`
-- Pagos/abonos: tabla `abonos`; comprobante en `abonos.comprobante` y carpeta `archivos/comprobantes_de_pagos/`
-- Soft delete: `facturas.estado = 'eliminada'` + `fecha_eliminacion`
-- **Purga automática:** el `historial.php` de marzo ejecuta en cada carga  
-  `DELETE FROM facturas WHERE estado = 'eliminada' AND fecha_eliminacion <= (NOW() - INTERVAL 15 DAY)`  
-  Eso es destructivo y ocurre en un GET de listado.
+| `historial/js/facturas.js` | Checkboxes → POST `ids_factura` |
+| `export/exportar_historial_excel.php` | PhpSpreadsheet **sin login**; sin IDs exporta las no eliminadas (**423** datos) |
+| `historial/ajax/buscar_facturas.php` | Paginación del **listado** |
+| ZIP marzo 2026 | El wizard **no existía**; no usar ese ZIP para desplegar |
 
 ---
 
-## B. Ubicación del código del reporte
+## F. Seguridad (sigue vigente)
 
-### Snapshot 2026-03-16 (desactualizado respecto al wizard actual)
-
-| Archivo | Rol |
-|---|---|
-| `historial.php` | Listado, filtros GET, paginación SQL `LIMIT 15 OFFSET …` |
-| `historial/js/facturas.js` | Checkboxes → POST `ids_factura` al exportador |
-| `export/exportar_historial_excel.php` | PhpSpreadsheet; si no hay IDs, exporta **todas** las no eliminadas |
-
-Ese exportador **no implementa** el wizard de campos/filtros/“Todos los registros”. El wizard se añadió **después** de marzo 2026.
-
-### Producción actual (2026-08-25) — archivos confirmados
-
-| Ruta | Evidencia |
-|---|---|
-| `/SystemSuplidor/historial.php` | Existe; sin sesión muestra “Acceso no autorizado” |
-| `/SystemSuplidor/historial/js/facturas.js` | 32 KB (vs 23 KB en marzo); AJAX + CSRF |
-| `/SystemSuplidor/historial/ajax/buscar_facturas.php` | Existe; 403 JSON sin sesión |
-| `/SystemSuplidor/export/exportar_historial_excel.php` | **Ejecuta sin autenticación** y genera XLSX |
-| Composer | `phpoffice/phpspreadsheet ^5.7` (marzo tenía `^5.1`) |
-
-Archivos que hay que leer por FTP en cuanto haya acceso (candidatos del wizard):
-
-- `historial.php`
-- `historial/ajax/*.php` (todo el directorio)
-- `export/*.php`
-- cualquier `*reporte*` añadido tras marzo
-- el HTML autenticado del historial (scripts inline)
-
----
-
-## C. Causa raíz del bug
-
-**No confirmada en el PHP vigente.** El wizard descrito (pasos Campos / Filtros / Opciones / Previsualización / “Todos los registros”) **no está** en el ZIP de marzo ni en los JS públicos actuales.
-
-Hipótesis ordenadas por probabilidad, a verificar en el PHP real:
-
-1. **Reuso de paginación del listado.** El listado vive ahora en `buscar_facturas.php` con `pagina`. Si el wizard/export llama el mismo query con `per_page` por defecto 25, “Todos” se ignora. Encaja con el síntoma y con el aviso del cliente de no confundir paginación visual con exportación.
-2. **Falsy fallback** (`$limit ?: 25`, `$request->limit ?? 25`, `selectedLimit || 25`) cuando “Todos” se envía como `0`, `null` o `""`.
-3. El exportador nuevo internamente reconsulta la **primera página** del AJAX.
-
-El exportador **viejo** (`export/exportar_historial_excel.php` sin `ids_factura`) **sí exporta el universo no eliminado** (centenares de filas). Por tanto el techo de 25 es del **wizard nuevo**, no de PhpSpreadsheet.
-
-Hasta no leer el PHP actual, no se afirmará una línea de código concreta como causa.
-
----
-
-## D. Corrección aplicada
-
-Ninguna. No hay canal de escritura (SSH cerrado; FTP/cPanel requieren contraseña). No se subió código a producción.
-
-Plan de corrección cuando exista FTP (mínimo, reversible):
-
-1. Backup timestamped de los PHP del historial/export (y dump DB si se tocara esquema — no se espera).
-2. Extraer a una sola función `buildInvoiceQuery(filters)` usada por preview y Excel.
-3. Límite: entero positivo ⇒ `LIMIT n`; “todos” ⇒ sin `LIMIT` (cursor/chunk si el volumen crece; hoy es centenares, cabe en un export).
-4. No usar `999999` como “todos”.
-5. Fecha fin inclusiva (`… 23:59:59` o `DATE()` / `< dia_siguiente`).
-6. “Todas las empresas / monedas / estados” = no aplicar ese predicado; respetar permisos de sesión.
-7. Autenticación + autorización en **todos** los endpoints de export/preview.
-8. Pruebas de la matriz §18 comparando COUNT SQL vs filas del XLSX.
-
----
-
-## E. Pruebas
-
-No se pudo autenticar el wizard. No se debe dar el bug por corregido.
-
-Conteo aproximado obtenido del exportador **no autenticado** (filtro del código de marzo: `estado != 'eliminada'`):
-
-| Métrica | Valor aproximado |
-|---|---|
-| Filas de datos en ese XLSX | **423** |
-| Umbral del bug | 25 ≪ 423, así que “Todos” es verificable |
-
-Matriz solicitada: **0/7**. Requiere login de empresa/admin o FTP + ejecución controlada.
-
-Observaciones del XLSX generado por el endpoint viejo (sin wizard):
-
-- Encabezados: `id_factura`, `proveedor`, `empresa_emisora`, `fecha_digital`, `producto`, `total`, `estado`, `es_credito`, `fecha_vencimiento`, `total_pagado`, `pendiente`
-- Totales numéricos (no texto)
-- **No** incluye NCF ni moneda como columnas
-- Fechas como `YYYY-MM-DD HH:MM:SS` (`DATETIME`)
-- El wizard del cliente pide columnas seleccionables; eso es código **distinto** a este exportador
-
-Filtros del listado en el snapshot de marzo:
-
-- Fecha: `fecha_digital BETWEEN inicio AND fin 23:59:59` (inclusivo — correcto si se mantiene)
-- Estado vacío ⇒ oculta `eliminada`
-- Empresa vacía ⇒ todas (pero un `usuario` queda forzado a `empresa_activa`)
-- Moneda: **no estaba** en ese listado; el cliente indica que producción sí la tiene
-- Buscar en tabla: ahora AJAX (`q`)
-- Ver eliminadas / rechazadas: query `estado` / `ver_rechazadas`
-
-El botón de reporte del wizard **no está** en el JS público; no se pudo ver si hereda filtros de la pantalla. Documentar ese comportamiento al abrir el HTML autenticado; no cambiar UX sin autorización.
-
----
-
-## F. Seguridad
-
-Clasificación. No se explotó nada más allá de URLs públicas. No se copió el `.env` a este repositorio.
+Este repo es público. No se commitaron `.env`, ZIP ni facturas.
 
 ### CRÍTICO
 
-1. **Backup de la aplicación descargable sin autenticación** en `/SystemSuplidor.zip` (~30 MB, marzo 2026). Incluye código, `.git` completo y **`.env`**. Cualquiera puede obtener secretos de correo/BD y el historial git. **Retirar el archivo ahora** (File Manager o FTP) y rotar credenciales de BD, correo, reCAPTCHA secret y contraseñas de usuarios si se sospecha exposición.
-2. **Exportación Excel sin autenticación** en `/SystemSuplidor/export/exportar_historial_excel.php`. Un GET/POST anónimo descarga el historial de facturas (proveedores, montos, estados). Hay que exigir sesión + autorización por rol/empresa y, si aplica, CSRF.
-3. El `.env` del ZIP contiene secretos en claro. Tratarlos como **comprometidos** hasta rotar.
+1. **`https://proveedoreslasociedad.com/SystemSuplidor.zip`** (~30 MB, marzo 2026) sigue descargable. Incluye `.git` y **`.env`**. Borrar ahora y rotar BD, correo, reCAPTCHA y claves de usuarios.
+2. **`/SystemSuplidor/export/exportar_historial_excel.php`** descarga el historial **sin autenticación**.
+3. Secretos del ZIP: tratarlos como comprometidos.
 
 ### ALTO
 
-4. **IDOR / export por IDs:** el exportador acepta `ids_factura` por POST y no mostraba, en marzo, comprobación de que esos IDs pertenezcan al usuario. Un proveedor no debe poder exportar facturas ajenas.
-5. **CSRF en acciones de borrado** vía querystring (`csrf_token` en URL en el JS actual) — se filtra por Referer/logs.
-6. **Subida de archivos:** hay que revisar MIME/extensión/traversal en `php/crear_factura_admin.php` y `php/registrar_abono.php` al tener FTP (marzo limitaba tamaño; no se auditó el path final).
-7. **Purga DELETE en GET** de historial (15 días) — efecto persistente en un listado.
+4. Wizard Excel **no filtra por rol/proveedor/empresa** (IDOR si hay sesión).
+5. CSRF en acciones de borrado (token en querystring).
+6. `DELETE` de facturas eliminadas antiguas en GET de historial (marzo; verificar si producción aún lo hace).
 
-### MEDIO
+### MEDIO / BAJO
 
-8. **Security through obscurity** en rutas (`p4n3lAdm1n…`). El splash de `/` **revela** la URL del panel en JavaScript público.
-9. `composer.json`, `composer.lock` y `vendor/` (p.ej. `vendor/composer/installed.json`) son **descargables**.
-10. Login de recuperación de clave: el código de marzo avanzaba al cambio de password **antes** de verificar el código en servidor (`verificarCodigoYContinuar` solo comprueba 6 dígitos en cliente). Verificar si producción lo corrigió.
-11. `APP_DEBUG` y entorno: no afirmar el valor de producción (está en `.env`).
+7. Splash de `/` revela URLs ofuscadas del panel en JS.
+8. `composer.json` / `vendor` descargables.
+9. GitHub de este repo está público: no subir secretos; preferible **privado**.
 
-### BAJO
+### Acción inmediata (cliente)
 
-12. Mensajes PDO con `die("Error al obtener facturas: " . $e->getMessage())` en historial de marzo.
-13. reCAPTCHA site key pública (esperado); el secret no debe estar en el ZIP.
-14. Este repositorio GitHub está público y vacío salvo el placeholder; no subir nunca `.env` ni el ZIP.
-
-### INFORMATIVO
-
-15. SSH deshabilitado; el canal operativo es **FTP o Terminal cPanel**.
-16. MySQL 3306 escuchando en público, acotado por “Remote MySQL” de cPanel.
-17. Soft delete + estados: `pendiente`, `aceptada`, `pagada`, `rechazada`, `eliminada`.
-18. Relación factura↔pago: `abonos.id_factura` → `facturas.id_factura`; pendiente = `total - SUM(abonos.monto)` (regla actual; no se cambió).
+1. Borrar `public_html/SystemSuplidor.zip`.
+2. Rotar credenciales.
+3. Exigir sesión en `export/exportar_historial_excel.php`.
+4. Pasar este GitHub a privado.
+5. Probar en la UI: Historial → Reporte de facturas → Todos (esperado: ≫ 25; hoy 423 sin filtros).
 
 ---
 
-## G. Deuda técnica (no modificada)
+## Cómo se obtuvo el fuente de producción
 
-- App monolítica PHP sin framework, rutas ofuscadas, mezcla de PDO y MySQLi.
-- Exportador viejo vs wizard nuevo: **dos lógicas**. Hay que unificar, no parchear solo el límite.
-- `env()` usa `if (!strpos($line, '='))` — un `=` al inicio de línea se ignora.
-- `.env` del snapshot duplicaba claves `DB_*` (gana la última).
-- Paginación HTML 15 en marzo vs síntoma 25 en producción: el listado cambió y no está versionado aquí.
-- Cada visita a historial podía borrar facturas “eliminadas” antiguas.
-- `exportar_historial_excel.php` no enviaba `NCF` ni moneda; montos sí numéricos.
-- Fecha fin del exportador viejo **sin** `23:59:59` (el listado sí lo tenía) — riesgo de perder facturas del día final en DATETIME.
-- Vendor en document root.
-- Sin staging identificado.
-
----
-
-## Acceso que falta (única intervención humana necesaria)
-
-No hay SSH. Para respaldar, leer el wizard actual, corregir y probar el XLSX hace falta **uno** de:
-
-1. **Contraseña cPanel** (usuario `glqbgjgb`) — File Manager + Terminal, o FTP `proveedoreslasociedad.com:21` (Pure-FTPd/TLS), usuario cPanel.
-2. **FTP dedicado** con permiso de escritura en `public_html/SystemSuplidor/`.
-3. Login de **administrador de la aplicación** (solo para probar el wizard; no basta para parchear PHP).
-
-No guardar esa contraseña en el repo, issues, `.env` de este GitHub, ni en el informe.
-
-Tras el acceso, el orden obligatorio sigue siendo: **identificar archivos actuales → backup → parche mínimo → probar Excel real → no tocar módulos ajenos**.
-
-### Acción inmediata (puede hacerla el cliente ahora, sin esperar el parche)
-
-1. Borrar o mover fuera de la web `public_html/SystemSuplidor.zip` (y cualquier otro `*.zip` de backups).
-2. Rotar credenciales de BD, correo y reCAPTCHA secret.
-3. Restringir `/export/exportar_historial_excel.php` (sesión) o desactivarlo hasta el parche.
-4. Pasar este repositorio GitHub a **privado**.
-5. Activar SSH en cPanel si se quiere un canal más seguro que FTP.
-
----
-
-## Cómo se obtuvo el snapshot
-
-El ZIP estaba **publicado en el document root**. Se usó solo para auditoría. No se commitó. No se reprodujeron secretos. El MySQL remoto rechazó este origen (esperado).
+cPanel `login_only` + FTP RETR/STOR (usuario de panel). La clave **no** está en este informe ni en git. Un PHP de conteo con token se subió, se ejecutó y se eliminó. No se dejó puerta trasera.

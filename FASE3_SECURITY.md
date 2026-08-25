@@ -53,4 +53,4 @@ Después: sesión → POST → CSRF (`validarTokenCSRF` / `$_SESSION['csrf_token
 - Justech GET: **405** `Método no permitido`. POST sin CSRF y con `csrf_token=fake`: **403** `Token de seguridad inválido.` DELETE no se alcanzó (rol admin va después del CSRF).
 - No se ejecutó POST de admin. **REGISTROS ELIMINADOS DURANTE PRUEBAS = 0.** **ARCHIVOS ELIMINADOS = 0.**
 
-La misma condición de purge sigue en `historial.php` (cada carga autenticada). Inventario; no parcheado en esta subfase.
+Purge de 15 días **retirado** de `historial.php` (GET ya no DELETE). Queda solo en `php/limpiar_facturas.php` (admin POST+CSRF). Backups `historial.php.bak-20260825-192944`. Soft/hard delete y restaurar: POST+CSRF+scope. HMAC email no tocado.

@@ -4,9 +4,166 @@ Fecha de auditoría: 2026-08-25
 Agente: Cursor Cloud Agent  
 Alcance: descubrimiento de arquitectura, localización del bug de exportación, seguridad y bloqueos para corregir producción.
 
-**Estado de esta intervención:** FASE 1 completada (arquitectura y superficie de ataque). El bug de “Todos los registros → 25 filas” **no se corrigió todavía** porque el código actual del wizard no está en el snapshot público de marzo 2026 y no hay SSH/FTP autenticado para leer/desplegar los PHP de producción.
+**Estado de esta intervención:** Wizard de reporte **localizado en producción** (`historial/generar_reporte.php` + `historial/preview_reporte.php`). El PHP se ejecuta en el servidor (no se sirve el fuente). Sin sesión ni FTP no se puede leer el `LIMIT` real. **No se parcheó nada.**
 
 Este repositorio de GitHub está **público**. Este informe **no incluye** contraseñas, dumps, `.env`, ni datos de facturas.
+
+---
+
+## Trazado del wizard (producción 2026-08-25)
+
+### Flujo comprobado por existencia de archivos (no por lectura del fuente)
+
+```
+Historial de Facturas
+  historial.php                    [sesión; sin login → plantilla no_autorizado]
+       │
+       │  botón "Reporte de facturas"  (HTML de historial.php; no está en el ZIP de marzo
+       │                                ni en historial/js/facturas.js público)
+       ▼
+Wizard "Generar Reporte de Facturas"
+  historial/generar_reporte.php    [GET 200 con sesión; sin sesión → no_autorizado HTML]
+       │
+       ├─► Previsualización
+       │     historial/preview_reporte.php
+       │     GET/POST sin sesión → HTTP 401  {"error":"No autorizado"}
+       │     Content-Type: application/json
+       │
+       └─► Excel
+             endpoint propio NO encontrado como archivo separado
+             (203 nombres probados en historial/, historial/ajax/, export/, php/)
+             Candidatos reales:
+               a) el mismo preview_reporte.php con action/format=xlsx
+               b) POST al propio generar_reporte.php
+               c) todavía export/exportar_historial_excel.php (flujo VIEJO, distinto)
+```
+
+### Lo que NO es el wizard
+
+| Pieza | Qué hace | ¿Es el wizard? |
+|---|---|---|
+| `historial/js/facturas.js` | Checkboxes + POST `ids_factura` | No. No menciona `generar_reporte` ni “Todos los registros” |
+| `js/historial.js` | Imprimir / eliminar | No |
+| `export/exportar_historial_excel.php` | PhpSpreadsheet; sin IDs exporta **todas** las no eliminadas (**423 filas** en prueba anónima, **sin** `LIMIT 25`) | Flujo viejo. Si el wizard usara este archivo sin IDs, “Todos” ya funcionaría |
+| `historial/ajax/buscar_facturas.php` | Paginación AJAX del **listado** (403 JSON sin sesión) | Tabla visual, no el wizard |
+| ZIP marzo 2026 `historial.php` | ` $registros_por_pagina = 15` + `LIMIT $registros_por_pagina OFFSET $offset` | Solo tabla. El wizard **no existía** |
+
+Conclusión: el techo de 25 **no está** en el exportador viejo. Está en el código **nuevo** (`generar_reporte.php` / `preview_reporte.php`), inaccesible sin sesión o FTP.
+
+### CAUSA RAÍZ — estado de comprobación
+
+```text
+CAUSA RAÍZ ENCONTRADA
+NO. El fuente PHP del wizard no es descargable: LiteSpeed lo ejecuta.
+
+Archivo frontend:
+  historial/generar_reporte.php  (HTML+JS del selector “Número de registros”)
+  historial.php                  (botón que abre el wizard; no aparece en JS públicos)
+
+Archivo backend:
+  historial/preview_reporte.php  (JSON de previsualización; auth-gated)
+  Excel: incrustado en uno de esos dos, o query interna — no hay .php extra con ese rol
+
+Valor enviado al seleccionar 25:
+  DESCONOCIDO (JS dentro de PHP autenticado)
+
+Valor enviado al seleccionar Todos:
+  DESCONOCIDO (0 / "" / "all" / "todos" / null — hay que leer el <option>)
+
+Valor recibido por PHP:
+  DESCONOCIDO hasta abrir preview_reporte.php / generar_reporte.php por FTP
+
+Consulta final:
+  DESCONOCIDA
+
+Motivo exacto por el que Todos termina en 25:
+  NO COMPROBADO. No se afirmará `?: 25` ni reuso de paginación hasta ver el fuente.
+
+Hipótesis a verificar EN ESE FUENTE (no aplicadas):
+  1. preview_reporte.php hace $limit = $_POST['limit'] ?: 25  (0 → 25)
+  2. “Todos” no se envía y el default del listado AJAX (25) se hereda
+  3. Excel llama buscar_facturas.php?pagina=1 (página de tabla)
+```
+
+### Filtros — mapa del listado (ZIP marzo; wizard producción = pendiente FTP)
+
+Listado `historial.php` (snapshot; producción añadió moneda y wizard):
+
+```text
+UI field:            Fecha Inicio
+Request parameter:   GET fecha_inicio
+PHP variable:        $fechaInicio
+SQL condition:       f.fecha_digital BETWEEN ? AND ?
+                     params: $fechaInicio , $fechaFin . " 23:59:59"
+
+UI field:            Fecha Fin
+Request parameter:   GET fecha_fin
+PHP variable:        $fechaFin
+SQL condition:       mismo BETWEEN; el listado SÍ concatena " 23:59:59"
+                     El exportador VIEJO NO:  f.fecha_digital <= $fecha_fin
+                     → si $fecha_fin es "2026-08-01" corta a las 00:00:00
+                     Bug de fecha fin en export viejo; reportado, no parcheado
+                     (puede no ser el wizard nuevo)
+
+UI field:            Estado
+Request parameter:   GET estado
+PHP variable:        $estado
+SQL condition:       si vacío: f.estado != 'eliminada'
+                     si valor:  f.estado = ?
+
+UI field:            Empresa
+Request parameter:   GET empresa
+PHP variable:        $empresa_filtro
+SQL condition:       si no '': f.id_empresa = ?
+                     rol usuario: siempre f.id_empresa = empresa_activa
+                     rol proveedor: f.id_proveedor = sesión
+
+UI field:            Moneda
+Request parameter:   no existía en el ZIP
+SQL condition:       pendiente de leer generar_reporte.php / historial.php actual
+
+UI field:            Número de registros (wizard)
+Request parameter:   desconocido (limit / registros / cantidad / per_page / pageSize)
+SQL condition:       desconocida — aquí está el bug
+
+UI field:            Ordenar por (Más recientes)
+Request parameter:   desconocido en wizard
+SQL listado marzo:   ORDER BY f.id_factura DESC
+SQL export viejo:    ORDER BY f.fecha_digital DESC
+```
+
+### Previsualización vs Excel
+
+- Preview: **sí existe** como endpoint aparte (`preview_reporte.php`, JSON, 401).
+- Excel: **no** hay un tercer PHP con nombre de descarga. O comparte preview, o vive dentro de `generar_reporte.php`.
+- No se puede afirmar si duplican el query hasta leer esos dos archivos.
+
+### Tabla vs exportación
+
+- Tabla: `buscar_facturas.php` (AJAX) + en marzo `LIMIT 15`. El síntoma 25 sugiere que producción subió el page size del **listado** a 25.
+- Export viejo: **sin LIMIT** (423 filas).
+- Wizard: aparte; no hereda del JS de checkboxes.
+
+### Hotfix — archivos exactos y acceso
+
+**No editar a ciegas el ZIP ni `exportar_historial_excel.php`:** ese no es el wizard.
+
+Abrir por **cPanel File Manager o FTP** (usuario `glqbgjgb`, host `proveedoreslasociedad.com:21`):
+
+1. `public_html/SystemSuplidor/historial/generar_reporte.php` — selector, `fetch`/`form`, valor de “Todos”
+2. `public_html/SystemSuplidor/historial/preview_reporte.php` — SQL/`LIMIT`
+3. `public_html/SystemSuplidor/historial.php` — enlace al wizard y si copia `pagina`/`limit` del listado
+4. Cualquier `include` que esos PHP carguen
+
+Parche esperado (cuando se vea el valor real de “Todos”):
+
+- allowlist `25|50|100|all` (o los `<option>` reales)
+- enteros → `LIMIT n` con bind/intval
+- `all` / 0-intencional → **omitir LIMIT** (no 999999)
+- misma función de query para preview y Excel
+- fecha fin inclusiva si el campo es DATETIME
+
+**Acceso que necesito:** contraseña cPanel/FTP. Con eso: backup `.bak` con timestamp → leer fuente → causa raíz en una línea → parche mínimo → contar filas del XLSX.
 
 ---
 
@@ -18,9 +175,8 @@ PHP 8.1+ / aplicación PHP propia (PilarDevs SystemSuplidor) / MySQL(MariaDB) / 
 Excel: PhpSpreadsheet 5.7 + PHPMailer 6.10
 
 CAUSA
-No confirmada en el PHP actual de producción. El wizard no existe en el snapshot de 2026-03-16.
-Hipótesis principal (sin confirmar): el exportador reutiliza la paginación de pantalla (per_page=25)
-o aplica `limit ?: 25` / `?? 25` cuando “Todos” llega como 0/null/"".
+NO CONFIRMADA (el fuente de generar_reporte.php / preview_reporte.php no es legible por HTTP).
+Archivos a abrir por FTP: ver sección “Trazado del wizard”.
 
 CAMBIO
 Ninguno en producción. No se tocó el servidor.

@@ -29,4 +29,12 @@ GET LEGACY — AUTHENTICATED ONLY. No se migró a POST+CSRF: la UI no llama este
 
 Consumidores: ningún botón/JS/formulario actual. Correos vigentes usan HMAC. `php/enviar-correos.php` (legado, sin callers) apunta a `{APP_URL}/acciones-factura.php` (ruta incorrecta, falta `/php/`). EMAIL DEPENDENCY actual: **NO**.
 
-Pruebas Justech (navegador, sin ejecutar aceptar/eliminar/restaurar): ver informe de entrega en el PR.
+### Pruebas (sin writes)
+
+Anónimo GET con ids reales (`aceptar`/`eliminar`/`restaurar`/`xxxx`): **401** `No autorizado`. Home **200**. Backup HTTP **403**.
+
+Justech (sesión proveedor), propia `fact_6a7c79e56fb4c` y ajena `fact_69b20cab54c30`: **403** `No autorizado` en aceptar/eliminar/restaurar. Sin SweetAlert de éxito. Sin redirect a historial.
+
+`accion=xxxx` con Justech: **403** `No autorizado` (el rol proveedor corta antes de la allowlist en la versión probada). Anónimo `xxxx`: **401**. Código vivo actual: sesión → allowlist **400** → rol **403**.
+
+`fact_6a7c79e56fb4c` (NCF B0100001638, MacBook Air) ya estaba **Aceptada** en las pruebas de aislamiento Justech (`browser_results.txt`, DETALLE_PROPIO) **antes** de este parche. Tras los GET rechazados sigue Aceptada. **FACTURAS MODIFICADAS DURANTE PRUEBA = 0.** No se revirtió ni se escribió estado.

@@ -1,9 +1,17 @@
-# Never commit production secrets, backups, or vendor dumps
+# Never commit production secrets, backups, dumps, or client files
 .env
 .env.*
 !.env.example
 *.zip
 *.xlsx
+*.sql
+*.bak
+*.bak-*
+*.old
+*.orig
+*.backup
 error_log
 **/vendor/
 SystemSuplidor/
+security_quarantine/
+archivos/

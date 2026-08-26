@@ -166,7 +166,7 @@ class PanelManager {
                     rncInput.focus();
                     return false;
                 }
-                if (rncHandler.rncStatus === 'DUPLICATE') {
+                if (rncHandler.rncStatus === 'DUPLICATE' || rncHandler.rncStatus === 'DUPLICADO') {
                     Swal.fire({
                         icon: 'error',
                         title: 'Documento ya registrado',
@@ -177,7 +177,7 @@ class PanelManager {
                     rncInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     return false;
                 }
-                if (rncHandler.rncStatus === 'ERROR' || rncHandler.rncStatus === 'INVALID') {
+                if (rncHandler.rncStatus === 'ERROR' || rncHandler.rncStatus === 'INVALID' || rncHandler.rncStatus === 'INVALIDO') {
                     Swal.fire({
                         icon: 'error',
                         title: 'No pudimos validar',

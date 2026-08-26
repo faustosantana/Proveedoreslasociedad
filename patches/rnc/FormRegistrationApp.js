@@ -58,14 +58,14 @@ class FormRegistrationApp {
                         rncInput.focus();
                         return;
                     }
-                    if (st === 'DUPLICATE') {
+                    if (st === 'DUPLICATE' || st === 'DUPLICADO') {
                         e.preventDefault();
                         mostrarAlertaLateralJS('Esta cédula/RNC ya se encuentra registrada.', 'error');
                         rncInput.focus();
                         rncInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         return;
                     }
-                    if (st === 'ERROR' || st === 'INVALID') {
+                    if (st === 'ERROR' || st === 'INVALID' || st === 'INVALIDO') {
                         e.preventDefault();
                         mostrarAlertaLateralJS('No pudimos validar la cédula/RNC. Verifica el número e intenta nuevamente.', 'error');
                         rncInput.focus();

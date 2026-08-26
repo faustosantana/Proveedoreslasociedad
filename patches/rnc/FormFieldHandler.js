@@ -147,7 +147,7 @@ class FormFieldHandler {
             mensajeValidacion.style.backgroundColor = '#e3f2fd';
             mensajeValidacion.style.color = '#1976d2';
             mensajeValidacion.style.border = '1px solid #90caf9';
-            mensajeValidacion.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Validando...';
+            mensajeValidacion.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verificando disponibilidad...';
             // Debounce de escritura (no se usa para el submit)
             this.rncValidationTimer = setTimeout(() => {
                 this.validarRncEnBD(e.target.value.trim(), mensajeValidacion);
@@ -312,19 +312,14 @@ class FormFieldHandler {
         })
         .then(data => {
             if (seq !== this.rncRequestSeq) return;
-            const status = data.status || (data.valido ? 'VALID' : 'DUPLICATE');
+            const status = data.status || data.codigo || '';
             this.rncStatus = status;
             this.rncValidando = false;
             mensajeElemento.style.display = 'block';
-            if (status === 'VALID' || data.valido === true) {
-                mensajeElemento.style.backgroundColor = '#e8f5e9';
-                mensajeElemento.style.color = '#2e7d32';
-                mensajeElemento.style.border = '1px solid #81c784';
-                mensajeElemento.innerHTML = '<i class="fas fa-check-circle"></i> ' + (data.mensaje || 'Cédula/RNC validado');
-                this.rncInput.style.borderColor = '#4caf50';
-                this.rncValidado = true;
-                this.setRncActionsEnabled(true);
-            } else if (status === 'DUPLICATE') {
+            const isDup = status === 'DUPLICATE' || status === 'DUPLICADO';
+            const isDisp = status === 'DOCUMENTO_DISPONIBLE' || data.documento_disponible === true;
+            const isInv = status === 'INVALIDO' || status === 'INVALID';
+            if (isDup) {
                 mensajeElemento.style.backgroundColor = '#ffebee';
                 mensajeElemento.style.color = '#c62828';
                 mensajeElemento.style.border = '1px solid #ef5350';
@@ -332,13 +327,21 @@ class FormFieldHandler {
                 this.rncInput.style.borderColor = '#f44336';
                 this.rncValidado = false;
                 this.setRncActionsEnabled(true);
+            } else if (isDisp && !isInv) {
+                mensajeElemento.style.backgroundColor = '#e8f5e9';
+                mensajeElemento.style.color = '#2e7d32';
+                mensajeElemento.style.border = '1px solid #81c784';
+                mensajeElemento.innerHTML = '<i class="fas fa-check-circle"></i> ' + (data.mensaje || 'Documento disponible (no registrado).');
+                this.rncInput.style.borderColor = '#4caf50';
+                this.rncValidado = true;
+                this.setRncActionsEnabled(true);
             } else {
                 mensajeElemento.style.backgroundColor = '#fff3e0';
                 mensajeElemento.style.color = '#e65100';
                 mensajeElemento.style.border = '1px solid #ffb74d';
-                const fallback = status === 'INVALID'
-                    ? 'No pudimos validar la cédula/RNC. Verifica el número e intenta nuevamente.'
-                    : 'Error al validar la cédula/RNC. Intenta nuevamente.';
+                const fallback = isInv
+                    ? 'El documento no tiene un formato válido.'
+                    : 'Error al verificar la cédula/RNC. Intenta nuevamente.';
                 mensajeElemento.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + (data.mensaje || fallback);
                 this.rncInput.style.borderColor = '#ff9800';
                 this.rncValidado = false;

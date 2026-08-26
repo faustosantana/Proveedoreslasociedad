@@ -1,13 +1,15 @@
 <?php
 /**
- * Endpoint para validar RNC/Cédula en tiempo real.
- * Respuestas: VALID | DUPLICATE | INVALID | ERROR
+ * Endpoint para verificar RNC/Cédula en tiempo real.
+ * Códigos: FORMATO_VALIDO (interno) | DOCUMENTO_DISPONIBLE | DUPLICADO | INVALIDO | ERROR
+ * Aliases JS: DUPLICATE (duplicado). No usar VALID como "identidad verificada".
  */
 
 ob_start();
 
 header('Content-Type: application/json; charset=utf-8');
 require_once '../../Base_de_datos/config.php';
+require_once __DIR__ . '/../modulos/DocumentoIdentidad.php';
 
 function ss_rnc_json(array $payload): void
 {
@@ -18,78 +20,48 @@ function ss_rnc_json(array $payload): void
     exit;
 }
 
-function ss_documento_digits(string $documento): string
+function ss_rnc_respuesta(string $codigo, string $mensaje, array $extra = []): void
 {
-    return preg_replace('/\D+/', '', $documento) ?? '';
-}
-
-if (!isset($_POST['rnc']) || trim((string) $_POST['rnc']) === '') {
-    ss_rnc_json([
-        'status' => 'INVALID',
-        'exists' => false,
+    $statusJs = $codigo;
+    if ($codigo === 'DUPLICADO') {
+        $statusJs = 'DUPLICATE';
+    }
+    $disponible = $codigo === 'DOCUMENTO_DISPONIBLE';
+    $formatoOk = in_array($codigo, ['FORMATO_VALIDO', 'DOCUMENTO_DISPONIBLE', 'DUPLICADO'], true);
+    ss_rnc_json(array_merge([
+        'status' => $statusJs,
+        'codigo' => $codigo,
+        'formato_valido' => $formatoOk,
+        'documento_disponible' => $disponible,
+        'exists' => $codigo === 'DUPLICADO',
         'valid' => false,
         'valido' => false,
-        'mensaje' => 'RNC vacío',
-    ]);
+        'mensaje' => $mensaje,
+    ], $extra));
 }
 
-$rnc = trim((string) $_POST['rnc']);
+$rnc = trim((string) ($_POST['rnc'] ?? ''));
 $tipo = trim((string) ($_POST['tipo'] ?? ''));
-$digits = ss_documento_digits($rnc);
 
-if ($digits === '') {
-    ss_rnc_json([
-        'status' => 'INVALID',
-        'exists' => false,
-        'valid' => false,
-        'valido' => false,
-        'mensaje' => 'No pudimos validar la cédula/RNC. Verifica el número e intenta nuevamente.',
-    ]);
-}
-
-if ($tipo === 'persona_individual' && strlen($digits) !== 11) {
-    ss_rnc_json([
-        'status' => 'INVALID',
-        'exists' => false,
-        'valid' => false,
-        'valido' => false,
-        'mensaje' => 'No pudimos validar la cédula/RNC. Verifica el número e intenta nuevamente.',
-    ]);
+$errFormato = DocumentoIdentidad::mensajeFormato($rnc, $tipo);
+if ($errFormato !== null) {
+    ss_rnc_respuesta('INVALIDO', $errFormato);
 }
 
 try {
-    $stmt = $pdo->prepare(
-        "SELECT COUNT(*) FROM proveedores
-         WHERE rnc_cedula = ?
-            OR REPLACE(REPLACE(REPLACE(TRIM(rnc_cedula), '-', ''), ' ', ''), '.', '') = ?"
-    );
-    $stmt->execute([$rnc, $digits]);
-    $existe = (int) $stmt->fetchColumn() > 0;
-
-    if ($existe) {
-        ss_rnc_json([
-            'status' => 'DUPLICATE',
-            'exists' => true,
-            'valid' => false,
-            'valido' => false,
-            'mensaje' => 'Esta cédula/RNC ya se encuentra registrada.',
-        ]);
+    if (DocumentoIdentidad::existeDuplicado($pdo, $rnc)) {
+        ss_rnc_respuesta('DUPLICADO', 'Esta cédula/RNC ya se encuentra registrada.');
     }
 
-    ss_rnc_json([
-        'status' => 'VALID',
-        'exists' => false,
-        'valid' => true,
-        'valido' => true,
-        'mensaje' => 'Cédula/RNC validado',
-    ]);
+    $digitos = DocumentoIdentidad::soloDigitos($rnc);
+    $esCedula = ($tipo === 'persona_individual') || strlen($digitos) === 11;
+    ss_rnc_respuesta(
+        'DOCUMENTO_DISPONIBLE',
+        $esCedula
+            ? 'Cédula disponible (no registrada).'
+            : 'RNC disponible (no registrado).'
+    );
 } catch (PDOException $e) {
-    error_log('Error al validar RNC: ' . $e->getMessage());
-    ss_rnc_json([
-        'status' => 'ERROR',
-        'exists' => false,
-        'valid' => false,
-        'valido' => false,
-        'mensaje' => 'No pudimos validar la cédula/RNC. Verifica el número e intenta nuevamente.',
-    ]);
+    error_log('Error al verificar RNC: ' . $e->getMessage());
+    ss_rnc_respuesta('ERROR', 'No pudimos verificar la cédula/RNC. Intenta nuevamente.');
 }

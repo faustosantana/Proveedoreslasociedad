@@ -1,0 +1,56 @@
+# Security hardening 2026-08-25 — prepended; original rewrite rules kept below.
+Options -Indexes
+
+<IfModule mod_headers.c>
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+RewriteEngine On
+
+# Secrets / VCS / dumps
+RewriteRule (^|/)\.git(/|$) - [F,L]
+RewriteRule (^|/)\.env - [F,L]
+RewriteRule \.(sql|bak|old|orig|backup)(-.*)?$ - [F,L]
+RewriteRule \.(zip|tar|gz|tgz|rar|7z)$ - [F,L]
+RewriteRule (^|/)(composer\.(json|lock)|installed\.json)$ - [F,L]
+
+RewriteEngine On
+
+# ============================================================
+#  MODO MANTENIMIENTO  ← ACTIVO
+#  Para desactivar: comenta las líneas de este bloque.
+# ============================================================
+
+# URL limpia: /mantenimiento sin .html
+#RewriteRule ^mantenimiento/?$ mantenimiento.html [L]
+
+# bypass.php siempre es accesible (acceso admin)
+#RewriteRule ^bypass\.php$ - [L]
+
+# Admin con cookie de bypass → salta SOLO la redirección a mantenimiento (S=1)
+#RewriteCond %{HTTP_COOKIE} bypass_maint=on
+#RewriteRule ^ - [S=1]
+
+# Todo lo demás → mantenimiento
+#RewriteCond %{THE_REQUEST} !mantenimiento
+#RewriteRule ^ mantenimiento [R=302,L]
+
+# ── FIN MANTENIMIENTO ────────────────────────────────────────
+
+
+# ============================================================
+#  ENRUTADOR — activo siempre (producción y modo bypass)
+#  En producción solo comenta el bloque MANTENIMIENTO de arriba.
+# ============================================================
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(s0p3r4dm1nQwErTyUiOpAsDfGhJkLzXcVbNm123456|x1y2z3aBcDeFgHiJkLmNoPqRsTuVwXyZ123456|h1s2t3QwErTyUiOpAsDfGhJkLzXcVbNm123456|l0g1nZxCvBnMqWeRtYuIoPlKjHgFdSaQwErTy123456|pr0b4PoIuYtReWqAsDfGhJkLmNbVcXz123456|d3t4ll3F4ctUr4QwErTyUiOpAsDfGhJkLzXcVbNm123456|f0rmSuPl1d0rQwErTyUiOpAsDfGhJkLzXcVbNm123456|s3l3cc10nQwErTyUiOpAsDfGhJkLzXcVbNm123456|s3l3mpR3s4QwErTyUiOpAsDfGhJkLzXcVbNm123456|p4n3lAdm1nQwErTyUiOpAsDfGhJkLzXcVbNm123456|p4n3lUsU4r10QwErTyUiOpAsDfGhJkLzXcVbNm123456|pr0c3s4rL0g1nQwErTyUiOpAsDfGhJkLzXcVbNm123456|4uth3nR3qu35tC0d3QwErTyUiOpAsDfGhJkLzXcVbNm123456|4uth3nV3r1fyC0d3QwErTyUiOpAsDfGhJkLzXcVbNm123456|r3g1str0Pr0v33d0rQwErTyUiOpAsDfGhJkLzXcVbNm123456)$ x9y8z7w6v5u4t3s2r1q0p.php/$1 [L]
+
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# ── FIN ENRUTADOR ────────────────────────────────────────────

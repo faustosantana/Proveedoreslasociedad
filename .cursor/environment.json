@@ -1,0 +1,9 @@
+{
+  "name": "Proveedores La Sociedad (PHP 8.2)",
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "php --version && composer --version && for f in $(git ls-files '*.php'); do php -l \"$f\"; done",
+  "start": "bash .cursor/start.sh"
+}

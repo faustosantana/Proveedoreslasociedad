@@ -5,6 +5,8 @@
 *.zip
 *.xlsx
 *.sql
+# Dev-only scaffolding schema for the local environment (not a production dump)
+!.cursor/provision-db.sql
 *.bak
 *.bak-*
 *.old
